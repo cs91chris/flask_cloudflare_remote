@@ -1,16 +1,16 @@
-__version_info__ = (1, 0, 0)
+__version__ = '1.0.1'
 
-author = {
-    'name': 'cs91chris',
-    'email': 'cs91chris@voidbrain.me'
-}
+__author_name__ = 'cs91chris'
+__author_email__ = 'cs91chris@voidbrain.me'
 
-__version__ = '.'.join(map(str, __version_info__))
-__author__ = "{} <{}>".format(author['name'], author['email'])
+__author__ = "{} <{}>".format(
+    __author_name__,
+    __author_email__
+)
 
 __all__ = [
-    '__version_info__',
     '__version__',
     '__author__',
-    'author'
+    '__author_name__',
+    '__author_email__',
 ]
