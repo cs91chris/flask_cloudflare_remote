@@ -4,40 +4,13 @@ import flask
 import netaddr as net
 
 
-class Singleton(type):
-    """
-    Define an Instance operation that lets clients access its unique instance
-    """
-    def __init__(cls, name, bases, attrs):
-        """
-
-        :param name:
-        :param bases:
-        :param attrs:
-        """
-        super().__init__(name, bases, attrs)
-        cls._instance = None
-
-    def __call__(cls, *args, **kwargs):
-        """
-
-        :param args:
-        :param kwargs:
-        :return:
-        """
-        if cls._instance is None:
-            cls._instance = super().__call__(*args, **kwargs)
-        return cls._instance
-
-
-class CloudflareRemote(metaclass=Singleton):
+class CloudflareRemote:
     def __init__(self, app=None, **kwargs):
         """
 
         :param app:
         :param kwargs:
         """
-        self._app = None
         self._cf_ips = None
         self._cf_ipv6_enabled = None
 
@@ -50,88 +23,48 @@ class CloudflareRemote(metaclass=Singleton):
         :param app:
         :param cf_ips:
         """
-        self._app = app
-        self._default_config()
+        self._default_config(app)
 
         if not cf_ips:
-            if self._app.config['CF_IPs'] is list:
-                self._cf_ips = self._app.config['CF_IPs']
+            if app.config['CF_IPs'] is list:
+                self._cf_ips = app.config['CF_IPs']
             else:
-                self._cf_ips = self.get_ips()
+                self._cf_ips = self._get_ip_list(app, app.config['CF_IP4_URI'])
+                if app.config['CF_IPv6_ENABLED']:
+                    self._cf_ips += self._get_ip_list(app, app.config['CF_IP6_URI'])
+
+                return self._cf_ips
         else:
             self._cf_ips = cf_ips
 
-        self._app.logger.debug('CLOUDFLARE registered ips:\n {}'.format(self._cf_ips))
+        app.logger.debug('CLOUDFLARE registered ips:\n {}'.format(self._cf_ips))
 
-        if self._app.config['CF_STRICT_ACCESS']:
-            self._app.before_request_funcs.setdefault(None, []).append(_hook_cloudflare_only)
-        if self._app.config['CF_OVERRIDE_REMOTE']:
-            self._app.before_request_funcs.setdefault(None, []).append(_hook_client_ip)
+        if app.config['CF_STRICT_ACCESS']:
+            app.before_request_funcs.setdefault(None, []).append(self._hook_cloudflare_only)
+        if app.config['CF_OVERRIDE_REMOTE']:
+            app.before_request_funcs.setdefault(None, []).append(self._hook_client_ip)
 
-        if not hasattr(self._app, 'extensions'):
-            self._app.extensions = dict()
-        self._app.extensions['cloudflare'] = self
+        if not hasattr(app, 'extensions'):
+            app.extensions = dict()
+        app.extensions['cloudflareRemote'] = self
 
-    def _default_config(self):
+    @staticmethod
+    def _default_config(app):
         """
 
         """
-        self._app.config.setdefault("CF_IPs", None)
-        self._app.config.setdefault("CF_REQ_TIMEOUT", 10)
-        self._app.config.setdefault("CF_IP4_URI", '/ips-v4')
-        self._app.config.setdefault("CF_IP6_URI", '/ips-v6')
-        self._app.config.setdefault("CF_IPv6_ENABLED", False)
-        self._app.config.setdefault("CF_STRICT_ACCESS", True)
-        self._app.config.setdefault("CF_OVERRIDE_REMOTE", True)
-        self._app.config.setdefault("CF_DOMAIN", 'www.cloudflare.com')
-        self._app.config.setdefault("CF_HDR_CLIENT_IP", 'CF-Connecting-IP')
+        app.config.setdefault("CF_IPs", None)
+        app.config.setdefault("CF_REQ_TIMEOUT", 10)
+        app.config.setdefault("CF_IP4_URI", '/ips-v4')
+        app.config.setdefault("CF_IP6_URI", '/ips-v6')
+        app.config.setdefault("CF_IPv6_ENABLED", False)
+        app.config.setdefault("CF_STRICT_ACCESS", True)
+        app.config.setdefault("CF_OVERRIDE_REMOTE", True)
+        app.config.setdefault("CF_DOMAIN", 'www.cloudflare.com')
+        app.config.setdefault("CF_HDR_CLIENT_IP", 'CF-Connecting-IP')
 
-    def request(self, method='GET', uri='/'):
-        """
-
-        :param method:
-        :param uri:
-        :return:
-        """
-        conn = http.client.HTTPSConnection(
-            host=self._app.config['CF_DOMAIN'],
-            timeout=self._app.config['CF_REQ_TIMEOUT'],
-            port=443
-        )
-        conn.request(method, uri)
-        res = conn.getresponse()
-        body = res.read()
-        conn.close()
-
-        return res.status, res.getheaders(), body
-
-    def _get_ip_list(self, uri):
-        """
-
-        :param uri:
-        :return:
-        """
-        if not self._cf_ips:
-            status, hdr, body = self.request(uri=uri)
-            if status == 200:
-                self._cf_ips = body.decode().strip('\n').split('\n')
-            else:
-                raise http.client.HTTPException(status, hdr, body)
-
-        return self._cf_ips
-
-    def get_ips(self):
-        """
-
-        :return:
-        """
-        ip_list = self._get_ip_list(self._app.config['CF_IP4_URI'])
-        if self._app.config['CF_IPv6_ENABLED']:
-            ip_list += self._get_ip_list(self._app.config['CF_IP6_URI'])
-
-        return ip_list
-
-    def ip_in_range(self, ipaddr, netaddr):
+    @staticmethod
+    def ip_in_range(ipaddr, netaddr):
         """
 
         :param ipaddr:
@@ -141,7 +74,7 @@ class CloudflareRemote(metaclass=Singleton):
         try:
             return net.IPAddress(ipaddr) in net.IPNetwork(netaddr)
         except (net.AddrConversionError, net.AddrFormatError, net.NotRegisteredError) as exc:
-            self._app.logger.debug(str(exc))
+            flask.current_app.logger.warning(str(exc))
             return False
 
     @staticmethod
@@ -150,14 +83,44 @@ class CloudflareRemote(metaclass=Singleton):
 
         :return:
         """
-        if flask.request.environ.get('HTTP_X_FORWARDED_FOR'):
-            return flask.request.environ['HTTP_X_FORWARDED_FOR']
-        if flask.request.environ.get('HTTP_X_FORWARDED'):
-            return flask.request.environ['HTTP_X_FORWARDED']
-        elif flask.request.environ.get('HTTP_X_REAL_IP'):
-            return flask.request.environ['HTTP_X_REAL_IP']
+        return flask.request.remote_addr
 
-        return flask.request.environ['REMOTE_ADDR']
+    def _hook_client_ip(self):
+        """
+
+        """
+        flask.request.environ['REMOTE_ADDR'] = self.get_client_ip()
+
+    def _hook_cloudflare_only(self):
+        """
+
+        """
+        if not self.is_cloudflare():
+            flask.abort(403, "Access Denied: only configured cloudflare IPs are allowed")
+
+    def _get_ip_list(self, app, uri):
+        """
+
+        :param uri:
+        :return:
+        """
+        if not self._cf_ips:
+            conn = http.client.HTTPSConnection(
+                host=app.config['CF_DOMAIN'],
+                timeout=app.config['CF_REQ_TIMEOUT'],
+                port=443
+            )
+            conn.request('GET', uri)
+            res = conn.getresponse()
+            body = res.read()
+            conn.close()
+
+            if res.status == 200:
+                self._cf_ips = body.decode().strip('\n').split('\n')
+            else:
+                raise http.client.HTTPException(res.status, res.getheaders(), body)
+
+        return self._cf_ips
 
     def is_cloudflare(self, remote=None):
         """
@@ -177,7 +140,7 @@ class CloudflareRemote(metaclass=Singleton):
                     ip_check = True
                     break
 
-        if self._app.config['CF_HDR_CLIENT_IP'] in flask.request.headers:
+        if flask.current_app.config['CF_HDR_CLIENT_IP'] in flask.request.headers:
             cf_req_check = True
 
         return ip_check and cf_req_check
@@ -189,21 +152,6 @@ class CloudflareRemote(metaclass=Singleton):
         """
         remote = self.get_remote()
         if self.is_cloudflare(remote):
-            return flask.request.headers['CF-Connecting-IP']
+            return flask.request.headers[flask.current_app.config['CF_HDR_CLIENT_IP']]
 
         return remote
-
-
-def _hook_client_ip():
-    """
-
-    """
-    flask.request.environ['REMOTE_ADDR'] = CloudflareRemote().get_client_ip()
-
-
-def _hook_cloudflare_only():
-    """
-
-    """
-    if not CloudflareRemote().is_cloudflare():
-        flask.abort(403, "Access Denied: only configured cloudflare IPs are allowed")
