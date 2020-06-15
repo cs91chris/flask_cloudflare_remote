@@ -4,7 +4,9 @@ Flask-CloudflareRemote
 Cloudflare proxy support for flask application.
 
 It gets client ip from cloudflare headers and can allow request from cloudflare ips only.
-
+If you are behind a proxy remember to use ``werkzeug.middleware.proxy_fix.ProxyFix``, alternative you can
+override ``CloudflareRemote.get_remote()`` in order to fetch the correct client ip
+for example via HTTP_X_FORWARDED_FOR.
 
 Quickstart
 ~~~~~~~~~~
