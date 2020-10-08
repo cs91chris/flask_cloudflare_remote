@@ -30,7 +30,6 @@ Example usage
 
     app = Flask(__name__)
     cf = CloudflareRemote()
-
     cf.init_app(app)
 
 
