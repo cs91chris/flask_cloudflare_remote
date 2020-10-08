@@ -25,6 +25,15 @@ class CloudflareRemote:
         """
         self._default_config(app)
 
+        if not hasattr(app, 'extensions'):
+            app.extensions = dict()
+        app.extensions['cloudflareRemote'] = self
+
+        if app.config['CF_STRICT_ACCESS']:
+            app.before_request_funcs.setdefault(None, []).append(self._hook_cloudflare_only)
+        if app.config['CF_OVERRIDE_REMOTE']:
+            app.before_request_funcs.setdefault(None, []).append(self._hook_client_ip)
+
         if not cf_ips:
             if app.config['CF_IPs'] is list:
                 self._cf_ips = app.config['CF_IPs']
@@ -38,15 +47,6 @@ class CloudflareRemote:
             self._cf_ips = cf_ips
 
         app.logger.debug('CLOUDFLARE registered ips:\n {}'.format(self._cf_ips))
-
-        if app.config['CF_STRICT_ACCESS']:
-            app.before_request_funcs.setdefault(None, []).append(self._hook_cloudflare_only)
-        if app.config['CF_OVERRIDE_REMOTE']:
-            app.before_request_funcs.setdefault(None, []).append(self._hook_client_ip)
-
-        if not hasattr(app, 'extensions'):
-            app.extensions = dict()
-        app.extensions['cloudflareRemote'] = self
 
     @staticmethod
     def _default_config(app):
@@ -64,16 +64,21 @@ class CloudflareRemote:
         app.config.setdefault("CF_HDR_CLIENT_IP", 'CF-Connecting-IP')
 
     @staticmethod
-    def ip_in_range(ipaddr, netaddr):
+    def ip_in_network(ipaddr, netaddr):
         """
 
-        :param ipaddr:
-        :param netaddr:
+        :param ipaddr: ip address
+        :param netaddr: network address
         :return:
         """
+        net_errors = (
+            net.AddrConversionError,
+            net.AddrFormatError,
+            net.NotRegisteredError
+        )
         try:
             return net.IPAddress(ipaddr) in net.IPNetwork(netaddr)
-        except (net.AddrConversionError, net.AddrFormatError, net.NotRegisteredError) as exc:
+        except net_errors as exc:
             flask.current_app.logger.warning(str(exc))
             return False
 
@@ -101,6 +106,7 @@ class CloudflareRemote:
     def _get_ip_list(self, app, uri):
         """
 
+        :param app:
         :param uri:
         :return:
         """
@@ -136,7 +142,7 @@ class CloudflareRemote:
 
         for r in remote.split(','):
             for ip in self._cf_ips:
-                if self.ip_in_range(r.strip(), ip):
+                if self.ip_in_network(r.strip(), ip):
                     ip_check = True
                     break
 
@@ -152,6 +158,7 @@ class CloudflareRemote:
         """
         remote = self.get_remote()
         if self.is_cloudflare(remote):
-            return flask.request.headers[flask.current_app.config['CF_HDR_CLIENT_IP']]
+            hdr_client_ip = flask.current_app.config['CF_HDR_CLIENT_IP']
+            return flask.request.headers[hdr_client_ip]
 
         return remote

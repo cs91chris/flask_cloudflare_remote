@@ -1,2 +1,2 @@
-from .version import *
 from .remote import CloudflareRemote
+from .version import *
