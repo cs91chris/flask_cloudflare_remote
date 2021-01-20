@@ -101,7 +101,13 @@ class CloudflareRemote:
 
         """
         if not self.is_cloudflare():
-            flask.abort(403, "Access Denied: only configured cloudflare IPs are allowed")
+            if flask.current_app.debug:
+                mess = "Access Denied: your ip is not in configured networks"
+                flask.abort(403, mess, response=dict(
+                    client_ip=self.get_client_ip(),
+                    allowed_networks=self._cf_ips
+                ))
+            flask.abort(403)
 
     def _get_ip_list(self, app, uri):
         """
