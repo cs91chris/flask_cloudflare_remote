@@ -1,6 +1,7 @@
 import http.client
 
 import flask
+from flask import current_app as cap
 import netaddr as net
 
 
@@ -46,13 +47,10 @@ class CloudflareRemote:
         else:
             self._cf_ips = cf_ips
 
-        app.logger.debug('CLOUDFLARE registered ips:\n {}'.format(self._cf_ips))
+        app.logger.debug('CLOUDFLARE registered ips:\n%s', self._cf_ips)
 
     @staticmethod
     def _default_config(app):
-        """
-
-        """
         app.config.setdefault("CF_IPs", None)
         app.config.setdefault("CF_REQ_TIMEOUT", 10)
         app.config.setdefault("CF_IP4_URI", '/ips-v4')
@@ -79,29 +77,19 @@ class CloudflareRemote:
         try:
             return net.IPAddress(ipaddr) in net.IPNetwork(netaddr)
         except net_errors as exc:
-            flask.current_app.logger.warning(str(exc))
+            cap.logger.exception(exc)
             return False
 
     @staticmethod
     def get_remote():
-        """
-
-        :return:
-        """
         return flask.request.remote_addr
 
     def _hook_client_ip(self):
-        """
-
-        """
         flask.request.environ['REMOTE_ADDR'] = self.get_client_ip()
 
     def _hook_cloudflare_only(self):
-        """
-
-        """
         if not self.is_cloudflare():
-            if flask.current_app.debug:
+            if cap.debug:
                 mess = "Access Denied: your ip is not in configured networks"
                 flask.abort(403, mess, response=dict(
                     client_ip=self.get_client_ip(),
@@ -152,19 +140,15 @@ class CloudflareRemote:
                     ip_check = True
                     break
 
-        if flask.current_app.config['CF_HDR_CLIENT_IP'] in flask.request.headers:
+        if cap.config['CF_HDR_CLIENT_IP'] in flask.request.headers:
             cf_req_check = True
 
         return ip_check and cf_req_check
 
     def get_client_ip(self):
-        """
-
-        :return:
-        """
         remote = self.get_remote()
         if self.is_cloudflare(remote):
-            hdr_client_ip = flask.current_app.config['CF_HDR_CLIENT_IP']
+            hdr_client_ip = cap.config['CF_HDR_CLIENT_IP']
             return flask.request.headers[hdr_client_ip]
 
         return remote
